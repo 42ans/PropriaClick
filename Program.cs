@@ -44,33 +44,12 @@ namespace PropriaClick
         private const uint SWP_NOSIZE = 0x0001;
         private const uint SWP_NOMOVE = 0x0002;
         private const uint SWP_NOACTIVATE = 0x0010;
-        private const uint GW_CHILD = 5;
-        private const uint GW_HWNDNEXT = 2;
         private const uint SVGIO_ALLVIEW = 0x00000002;
+        private const uint SHCONTF_FOLDERS = 0x00000020;
         private const int SIGDN_NORMALDISPLAY = 0;
         private const int SIGDN_DESKTOPABSOLUTEPARSING = unchecked((int)0x80028000);
         private const int STALE_CLICK_MS = 3000;
         private const int MAX_LOGGED_SIZE = 1024 * 1024;
-
-        // Shell folders that appear as navigation pane nodes. They are matched by their
-        // localized display name, because the navigation tree exposes no item id lists
-        // to an outside process.
-        private static readonly Guid[] NavFolderIds = new Guid[]
-        {
-            new Guid("B4BFCC3A-DB2C-424C-B029-7FE99A87C641"), // FOLDERID_Desktop
-            new Guid("5E6C858F-0E22-4760-9AFE-EA3317B67173"), // FOLDERID_Profile
-            new Guid("374DE290-123F-4565-9164-39C4925E467B"), // FOLDERID_Downloads
-            new Guid("FDD39AD0-238F-46AF-ADB4-6C85480369C7"), // FOLDERID_Documents
-            new Guid("33E28130-4E1E-4676-835A-98395C3BC3BB"), // FOLDERID_Pictures
-            new Guid("4BD8D571-6D19-48D3-BE97-422220080E43"), // FOLDERID_Music
-            new Guid("18989B1D-99B5-455B-841C-AB7C74E4DDFC"), // FOLDERID_Videos
-            new Guid("031E4825-7B94-4DC3-B131-E946B44C8DD5"), // FOLDERID_Libraries
-            new Guid("0AC0837C-BBF8-452A-850D-79D08E667CA7"), // FOLDERID_ComputerFolder
-            new Guid("D20BEEC4-5CA8-4905-AE3B-BF251EA09B53"), // FOLDERID_NetworkFolder
-            new Guid("B7534046-3ECB-4C18-BE4E-64CD4CB7D6AC"), // FOLDERID_RecycleBinFolder
-            new Guid("82A74AEB-AEB4-465C-A014-D097EE346D63"), // FOLDERID_ControlPanelFolder
-            new Guid("F3CE0F7C-4901-4ACC-8648-D5D44B04EF8F"), // FOLDERID_UsersFiles
-        };
 
         private static readonly Guid CLSID_ShellWindows = new Guid("9BA05972-F6A8-11CF-A442-00A0C90A8F39");
         private static readonly Guid SID_STopLevelBrowser = new Guid("4C96BE40-915C-11CF-99D3-00AA004AE837");
@@ -181,14 +160,8 @@ namespace PropriaClick
         [DllImport("user32.dll")]
         private static extern IntPtr GetParent(IntPtr hWnd);
 
-        [DllImport("user32.dll")]
-        private static extern IntPtr GetWindow(IntPtr hWnd, uint uCmd);
-
         [DllImport("user32.dll", CharSet = CharSet.Unicode)]
         private static extern int GetClassName(IntPtr hWnd, StringBuilder lpClassName, int nMaxCount);
-
-        [DllImport("user32.dll")]
-        private static extern bool ScreenToClient(IntPtr hWnd, ref POINT lpPoint);
 
         [DllImport("user32.dll")]
         private static extern bool PostMessage(IntPtr hWnd, uint Msg, IntPtr wParam, IntPtr lParam);
@@ -244,8 +217,8 @@ namespace PropriaClick
         [DllImport("shell32.dll", CharSet = CharSet.Unicode)]
         private static extern int SHParseDisplayName(string pszName, IntPtr pbc, out IntPtr ppidl, uint sfgaoIn, out uint psfgaoOut);
 
-        [DllImport("shell32.dll", CharSet = CharSet.Unicode)]
-        private static extern int SHGetKnownFolderPath(ref Guid rfid, uint dwFlags, IntPtr hToken, out IntPtr ppszPath);
+        [DllImport("shell32.dll")]
+        private static extern int SHGetDesktopFolder(out IntPtr ppshf);
 
         [DllImport("shell32.dll")]
         private static extern uint ILGetSize(IntPtr pidl);
@@ -264,6 +237,30 @@ namespace PropriaClick
 
         [DllImport("ole32.dll")]
         private static extern void CoTaskMemFree(IntPtr pv);
+
+        [ComImport, Guid("000214E6-0000-0000-C000-000000000046"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
+        private interface IShellFolder
+        {
+            [PreserveSig] int ParseDisplayName(IntPtr hwnd, IntPtr pbc, string name, out IntPtr pidl, out uint eaten, out uint attrs);
+            [PreserveSig] int EnumObjects(IntPtr hwnd, uint flags, out IEnumIDList list);
+            [PreserveSig] int BindToObject(IntPtr pidl, IntPtr pbc, ref Guid riid, out IntPtr ppv);
+            [PreserveSig] int BindToStorage(IntPtr pidl, IntPtr pbc, ref Guid riid, out IntPtr ppv);
+            [PreserveSig] int CompareIDs(IntPtr l, IntPtr a, IntPtr b);
+            [PreserveSig] int CreateViewObject(IntPtr hwnd, ref Guid riid, out IntPtr ppv);
+            [PreserveSig] int GetAttributesOf(int cidl, IntPtr apidl, ref uint attrs);
+            [PreserveSig] int GetUIObjectOf(IntPtr hwnd, int cidl, IntPtr apidl, ref Guid riid, IntPtr reserved, out IntPtr ppv);
+            [PreserveSig] int GetDisplayNameOf(IntPtr pidl, uint flags, out IntPtr name);
+            [PreserveSig] int SetNameOf(IntPtr hwnd, IntPtr pidl, string name, uint flags, IntPtr pidlOut);
+        }
+
+        [ComImport, Guid("000214F2-0000-0000-C000-000000000046"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
+        private interface IEnumIDList
+        {
+            [PreserveSig] int Next(int celt, out IntPtr rgelt, out int fetched);
+            [PreserveSig] int Skip(int celt);
+            [PreserveSig] int Reset();
+            [PreserveSig] int Clone(out IEnumIDList copy);
+        }
 
         [ComImport, Guid("6D5140C1-7436-11CE-8034-00AA006009FA"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
         private interface IServiceProvider
@@ -798,7 +795,9 @@ namespace PropriaClick
             IntPtr h = WindowFromPoint(pt);
             for (int i = 0; i < 16 && h != IntPtr.Zero; i++)
             {
-                if (GetClassNameStr(h) == "SHELLDLL_DefView") return true;
+                string c = GetClassNameStr(h);
+                // the file view of a folder window, and the navigation pane beside it
+                if (c == "SHELLDLL_DefView" || c == "NamespaceTreeControl") return true;
                 h = GetParent(h);
             }
             return false;
@@ -833,11 +832,14 @@ namespace PropriaClick
             _workerReady.WaitOne(3000);
         }
 
-        // 0 = nothing usable, 1 = shell view item (selected through UIA),
-        // 2 = navigation pane tree node (name captured, selection left untouched).
-        private static int GetUiaHit(POINT pt, out string treeItemName)
+        // 0 = nothing usable, 1 = shell view item (the element is returned so the caller can fall
+        // back to it), 2 = navigation pane tree node (name captured).
+        // Nothing is selected here: selecting the item under the cursor is a visible side effect,
+        // and the selection is not evidence of which item was clicked anyway.
+        private static int FindUiaTarget(POINT pt, out string treeItemName, out AutomationElement listItem)
         {
             treeItemName = null;
+            listItem = null;
             try
             {
                 AutomationElement el = AutomationElement.FromPoint(new System.Windows.Point(pt.x, pt.y));
@@ -851,11 +853,7 @@ namespace PropriaClick
 
                     if (ct == ControlType.ListItem || ct == ControlType.DataItem)
                     {
-                        object pattern;
-                        if (!cur.TryGetCurrentPattern(SelectionItemPattern.Pattern, out pattern)) return 0;
-                        ((SelectionItemPattern)pattern).Select();
-                        // let the view commit the selection before it is read back
-                        Thread.Sleep(60);
+                        listItem = cur;
                         return 1;
                     }
                     if (ct == ControlType.TreeItem)
@@ -874,13 +872,35 @@ namespace PropriaClick
             }
         }
 
+        // Selects the item through UI Automation, for the views that cannot hit test their items
+        // (the Windows 11 home and gallery pages). Only used when hit testing found nothing.
+        private static bool SelectUiaItem(AutomationElement el)
+        {
+            if (el == null) return false;
+            try
+            {
+                object pattern;
+                if (!el.TryGetCurrentPattern(SelectionItemPattern.Pattern, out pattern)) return false;
+                ((SelectionItemPattern)pattern).Select();
+                // let the view commit the selection before it is read back
+                Thread.Sleep(60);
+                return true;
+            }
+            catch (Exception ex)
+            {
+                Log("uia select failed " + ex.Message);
+                return false;
+            }
+        }
+
         private static void HandlePendingClick(POINT pt, IntPtr hwnd)
         {
             IntPtr top = GetAncestor(hwnd, GA_ROOT);
             string cls = GetClassNameStr(top);
 
             string treeItemName;
-            int kind = GetUiaHit(pt, out treeItemName);
+            AutomationElement listItem;
+            int kind = FindUiaTarget(pt, out treeItemName, out listItem);
 
             if (kind == 2)
             {
@@ -911,154 +931,74 @@ namespace PropriaClick
                 return;
             }
 
-            int index = -1;
+            // The item is the one UI Automation reports under the cursor, looked up by display
+            // name. The view's selection is not used as the primary answer: the click is
+            // swallowed before Explorer sees it, the selection therefore still holds whatever was
+            // clicked last, and selecting through UI Automation moves the focused item while
+            // leaving the selection mark behind - either one read first reopens the previous
+            // item's properties.
+            IntPtr itemPidl = IntPtr.Zero;
             if (kind == 1)
             {
-                if (fv.GetSelectionMarkedItem(out index) != 0 || index < 0)
+                string name = null;
+                try { name = listItem.Current.Name; } catch { }
+                if (string.IsNullOrEmpty(name)) name = ItemNameAt(listItem);
+                if (!string.IsNullOrEmpty(name))
                 {
-                    if (fv.GetFocusedItem(out index) != 0 || index < 0) return;
+                    itemPidl = FindItemByDisplayName(fv, name);
+                    if (itemPidl == IntPtr.Zero) itemPidl = FindItemByShellItemArray(fv, name);
+                    if (itemPidl == IntPtr.Zero) Log("click: no item named '" + name + "'");
                 }
             }
-            else
+
+            // Views that expose the item but not its name: let the view itself say which item the
+            // click landed on.
+            if (itemPidl == IntPtr.Zero && kind == 1 && SelectUiaItem(listItem))
             {
-                // Some views (the Windows 11 home and gallery pages) do not report their items
-                // through UIA or ItemAt. Try the cheapest exact answer first, then the general
-                // ones that do not depend on hit testing.
-                if (HitTestIndex(fv, sv, pt, out index) != 0 || index < 0) index = HitTestByPosition(fv, sv, pt);
-                if (index < 0)
-                {
-                    IntPtr xamlPidl = ResolveXamlItem(fv, pt);
-                    if (xamlPidl != IntPtr.Zero)
-                    {
-                        try { ShowProperties(xamlPidl, top); }
-                        finally { CoTaskMemFree(xamlPidl); }
-                    }
-                    return;
-                }
+                int index;
+                if (fv.GetFocusedItem(out index) == 0 && index >= 0) itemPidl = AbsoluteItemPidl(fv, index);
+                if (itemPidl == IntPtr.Zero && fv.GetSelectionMarkedItem(out index) == 0 && index >= 0)
+                    itemPidl = AbsoluteItemPidl(fv, index);
+                if (itemPidl != IntPtr.Zero) Log("click: resolved through the view selection");
             }
 
-            IntPtr itemPidl;
-            if (fv.Item(index, out itemPidl) != 0 || itemPidl == IntPtr.Zero) return;
+            // Some views (the Windows 11 home and gallery pages) render their items in a XAML
+            // island; the accessibility tree still names the element under the cursor.
+            if (itemPidl == IntPtr.Zero) itemPidl = ResolveXamlItem(fv, pt);
 
-            // IFolderView::Item returns a PIDL relative to the view's folder; ShellExecuteEx
-            // needs a desktop-absolute one.
-            IntPtr folderPidl = GetFolderPidl(fv);
+            if (itemPidl == IntPtr.Zero)
+            {
+                Log("click: cannot resolve the item");
+                return;
+            }
+
+            try { ShowProperties(itemPidl, top); }
+            finally { CoTaskMemFree(itemPidl); }
+        }
+
+        // IFolderView::Item returns a PIDL relative to the view's folder; ShellExecuteEx needs a
+        // desktop-absolute one.
+        private static IntPtr AbsoluteItemPidl(IFolderView fv, int index)
+        {
+            IntPtr relative;
+            if (fv.Item(index, out relative) != 0 || relative == IntPtr.Zero) return IntPtr.Zero;
             try
             {
-                IntPtr absolute = folderPidl != IntPtr.Zero ? ILCombine(folderPidl, itemPidl) : IntPtr.Zero;
-                bool combined = absolute != IntPtr.Zero;
-                if (!combined) absolute = itemPidl;
-
-                ShowProperties(absolute, top);
-                if (combined) CoTaskMemFree(absolute);
+                IntPtr folderPidl = GetFolderPidl(fv);
+                try
+                {
+                    if (folderPidl == IntPtr.Zero) return ClonePidl(relative);
+                    return ILCombine(folderPidl, relative);
+                }
+                finally
+                {
+                    if (folderPidl != IntPtr.Zero) CoTaskMemFree(folderPidl);
+                }
             }
             finally
             {
-                CoTaskMemFree(itemPidl);
-                if (folderPidl != IntPtr.Zero) CoTaskMemFree(folderPidl);
+                CoTaskMemFree(relative);
             }
-        }
-
-        private static int HitTestIndex(IFolderView fv, IShellView sv, POINT screenPt, out int index)
-        {
-            index = -1;
-            IntPtr vh;
-            int hr = sv.GetWindow(out vh);
-            if (hr != 0 || vh == IntPtr.Zero) return hr != 0 ? hr : -1;
-            POINT p = screenPt;
-            ScreenToClient(vh, ref p);
-            return fv.ItemAt(p, out index);
-        }
-
-        // Some shell views (the Windows 11 home and gallery pages) do not implement
-        // IFolderView::ItemAt, but they still report where their items are. Accept a position
-        // only when the click lands inside that item's cell.
-        private static int HitTestByPosition(IFolderView fv, IShellView sv, POINT screenPt)
-        {
-            try
-            {
-                IntPtr vh;
-                if (sv.GetWindow(out vh) != 0 || vh == IntPtr.Zero) return -1;
-
-                int count;
-                if (fv.ItemCount(SVGIO_ALLVIEW, out count) != 0 || count <= 0) return -1;
-
-                POINT spacing;
-                if (fv.GetSpacing(out spacing) != 0 || spacing.x <= 0 || spacing.y <= 0)
-                {
-                    spacing.x = 96;
-                    spacing.y = 96;
-                }
-
-                int n = count > 5000 ? 5000 : count;
-                List<int> ids = new List<int>(n);
-                List<POINT> pos = new List<POINT>(n);
-                for (int i = 0; i < n; i++)
-                {
-                    IntPtr pidl;
-                    if (fv.Item(i, out pidl) != 0 || pidl == IntPtr.Zero) continue;
-                    POINT p;
-                    int hrp = fv.GetItemPosition(pidl, out p);
-                    CoTaskMemFree(pidl);
-                    if (hrp != 0) continue;
-                    ids.Add(i);
-                    pos.Add(p);
-                }
-                if (ids.Count == 0) return -1;
-
-                IntPtr[] origins = CandidateOrigins(vh);
-                for (int oi = 0; oi < origins.Length; oi++)
-                {
-                    POINT local = screenPt;
-                    ScreenToClient(origins[oi], ref local);
-                    int best = -1;
-                    int bestD = int.MaxValue;
-                    for (int k = 0; k < ids.Count; k++)
-                    {
-                        int dx = local.x - pos[k].x;
-                        int dy = local.y - pos[k].y;
-                        if (dx < 0 || dy < 0 || dx >= spacing.x || dy >= spacing.y) continue;
-                        int d = dx * dx + dy * dy;
-                        if (d < bestD) { bestD = d; best = k; }
-                    }
-                    if (best >= 0) return ids[best];
-                }
-                return -1;
-            }
-            catch (Exception ex)
-            {
-                Log("position hit test failed " + ex.Message);
-                return -1;
-            }
-        }
-
-        // Item positions are reported relative to the shell view window or to one of the DUI /
-        // XAML hosts nested inside it, so every plausible origin is tried.
-        private static IntPtr[] CandidateOrigins(IntPtr viewWindow)
-        {
-            List<IntPtr> list = new List<IntPtr>();
-            list.Add(viewWindow);
-            IntPtr child = GetWindow(viewWindow, GW_CHILD);
-            int guard = 0;
-            while (child != IntPtr.Zero && guard++ < 32)
-            {
-                if (IsItemHostClass(GetClassNameStr(child))) list.Add(child);
-                IntPtr grandChild = GetWindow(child, GW_CHILD);
-                int inner = 0;
-                while (grandChild != IntPtr.Zero && inner++ < 32)
-                {
-                    if (IsItemHostClass(GetClassNameStr(grandChild))) list.Add(grandChild);
-                    grandChild = GetWindow(grandChild, GW_HWNDNEXT);
-                }
-                child = GetWindow(child, GW_HWNDNEXT);
-            }
-            return list.ToArray();
-        }
-
-        private static bool IsItemHostClass(string c)
-        {
-            return c == "DUIViewWndClassName" || c == "DUIListView" || c == "DirectUIHWND" ||
-                   c.IndexOf("DesktopChildSiteBridge") >= 0;
         }
 
         // Last resort for views whose items cannot be hit tested (the Windows 11 home and gallery
@@ -1357,43 +1297,23 @@ namespace PropriaClick
             }
         }
 
-        // Maps a navigation pane node (identified by its localized display name and nothing else)
-        // to a shell item. Virtual folders are addressed by CLSID, plain folders by known folder
-        // path, and drives by root path.
+        // A navigation pane node is one of the folders the shell shows at the top of its namespace,
+        // so its caption is looked up among the children of the namespace root. Drives are the
+        // exception: they hang off "This PC" and are matched through their root path.
         private static IntPtr ResolveNavigationName(string name)
         {
             if (string.IsNullOrEmpty(name)) return IntPtr.Zero;
 
-            string[] virtualFolders = new string[]
-            {
-                "::{20D04FE0-3AEA-1069-A2D8-08002B30309D}", // this pc
-                "::{F02C1A0D-BE21-4350-88B0-7367FC96EF3C}", // network
-                "::{645FF040-5081-101B-9F08-00AA002F954E}", // recycle bin
-                "::{5399E694-6CE5-4D6C-8FCE-1D8870FDCBA0}", // control panel
-                "::{031E4825-7B94-4DC3-B131-E946B44C8DD5}", // libraries
-                "::{00021400-0000-0000-C000-000000000046}", // desktop
-            };
-            for (int i = 0; i < virtualFolders.Length; i++)
-            {
-                IntPtr pidl;
-                if (TryParseAndMatch(virtualFolders[i], name, out pidl)) return pidl;
-            }
-
-            for (int i = 0; i < NavFolderIds.Length; i++)
-            {
-                IntPtr pathPidl = KnownFolderPidl(ref NavFolderIds[i]);
-                if (pathPidl == IntPtr.Zero) continue;
-                if (PidlMatchesName(pathPidl, name)) return pathPidl;
-                CoTaskMemFree(pathPidl);
-            }
+            IntPtr pidl = FindNamespaceRootChild(name);
+            if (pidl != IntPtr.Zero) return pidl;
 
             try
             {
                 DriveInfo[] drives = DriveInfo.GetDrives();
                 for (int i = 0; i < drives.Length; i++)
                 {
-                    IntPtr pidl;
-                    if (TryParseAndMatch(drives[i].RootDirectory.FullName, name, out pidl)) return pidl;
+                    IntPtr drivePidl;
+                    if (TryParseAndMatch(drives[i].RootDirectory.FullName, name, out drivePidl)) return drivePidl;
                 }
             }
             catch (Exception ex)
@@ -1402,6 +1322,42 @@ namespace PropriaClick
             }
 
             return IntPtr.Zero;
+        }
+
+        // Walks the shell namespace root - the desktop folder - for a child with that display
+        // name. Everything the navigation pane lists at its top level is a child of it: home,
+        // gallery, libraries, this PC, network, the known folders and the user profile.
+        private static IntPtr FindNamespaceRootChild(string name)
+        {
+            IntPtr desktopPtr;
+            if (SHGetDesktopFolder(out desktopPtr) != 0 || desktopPtr == IntPtr.Zero) return IntPtr.Zero;
+            IEnumIDList list = null;
+            try
+            {
+                IShellFolder desktop = (IShellFolder)Marshal.GetObjectForIUnknown(desktopPtr);
+                if (desktop.EnumObjects(IntPtr.Zero, SHCONTF_FOLDERS, out list) != 0 || list == null)
+                    return IntPtr.Zero;
+
+                for (int i = 0; i < 4096; i++)
+                {
+                    IntPtr child;
+                    int fetched;
+                    if (list.Next(1, out child, out fetched) != 0 || fetched != 1 || child == IntPtr.Zero) break;
+                    if (PidlMatchesName(child, name)) return child;
+                    CoTaskMemFree(child);
+                }
+                return IntPtr.Zero;
+            }
+            catch (Exception ex)
+            {
+                Log("namespace root lookup failed " + ex.Message);
+                return IntPtr.Zero;
+            }
+            finally
+            {
+                if (list != null) Marshal.ReleaseComObject(list);
+                Marshal.Release(desktopPtr);
+            }
         }
 
         private static bool TryParseAndMatch(string pathOrClsid, string name, out IntPtr pidl)
@@ -1414,22 +1370,6 @@ namespace PropriaClick
             CoTaskMemFree(pidl);
             pidl = IntPtr.Zero;
             return false;
-        }
-
-        private static IntPtr KnownFolderPidl(ref Guid id)
-        {
-            IntPtr pathPtr;
-            if (SHGetKnownFolderPath(ref id, 0, IntPtr.Zero, out pathPtr) != 0 || pathPtr == IntPtr.Zero)
-                return IntPtr.Zero;
-            string path;
-            try { path = Marshal.PtrToStringUni(pathPtr); }
-            finally { CoTaskMemFree(pathPtr); }
-            if (string.IsNullOrEmpty(path)) return IntPtr.Zero;
-
-            IntPtr pidl;
-            uint attrs;
-            if (SHParseDisplayName(path, IntPtr.Zero, out pidl, 0, out attrs) != 0) return IntPtr.Zero;
-            return pidl;
         }
 
         private static bool PidlMatchesName(IntPtr pidl, string name)
